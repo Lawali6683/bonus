@@ -17,49 +17,51 @@ if (!admin.apps.length) {
 const db = admin.database();
 
 module.exports = async (req, res) => {
-    // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key");
 
-    // Handle OPTIONS request (CORS Preflight)
-    if (req.method === "OPTIONS") {
-        return res.status(204).end();
-    }
+    if (req.method === "OPTIONS") return res.status(204).end();
 
-    // Verify API key
     const authHeader = req.headers["x-api-key"];
     if (!authHeader || authHeader !== API_AUTH_KEY) {
         return res.status(401).json({ error: "Unauthorized request" });
     }
 
-    // Verify POST method
     if (req.method !== "POST") {
         return res.status(405).json({ error: "Method not allowed" });
     }
 
     const { email, bonusAmount } = req.body;
-    if (!email || !bonusAmount) {
+
+    // Gyara nan: muna tabbatar da email yana nan, kuma bonusAmount ba undefined ba ne
+    if (!email || bonusAmount === undefined) {
         return res.status(400).json({ error: "Email and bonusAmount are required" });
     }
 
     try {
-        const userRef = db.ref(`users/${crypto.createHash("md5").update(email).digest("hex")}`);
-        const userSnapshot = await userRef.once("value");
+        const userId = crypto.createHash("md5").update(email).digest("hex");
+        const userRef = db.ref(`users/${userId}`);
+        const snapshot = await userRef.once("value");
 
-        if (!userSnapshot.exists()) {
+        if (!snapshot.exists()) {
             return res.status(404).json({ error: "User not found" });
         }
 
-        const userData = userSnapshot.val();
-        const { vestBit } = userData;
+        const user = snapshot.val();
+        const currentVestBit = parseFloat(user.vestBit || 0);
+        const bonusToAdd = parseFloat(bonusAmount);
 
-        // Add bonus amount to VestBit
-        const newVestBit = vestBit + parseFloat(bonusAmount);
+        if (isNaN(bonusToAdd)) {
+            return res.status(400).json({ error: "Invalid bonusAmount value" });
+        }
+
+        const newVestBit = currentVestBit + bonusToAdd;
+
         await userRef.update({ vestBit: newVestBit });
 
-        res.json({ message: "VestBit updated successfully." });
-    } catch (error) {
-        res.status(500).json({ error: "Internal server error", details: error.message });
+        return res.json({ message: "VestBit bonus added successfully." });
+    } catch (err) {
+        return res.status(500).json({ error: "Internal server error", details: err.message });
     }
 };
