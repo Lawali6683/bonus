@@ -16,7 +16,6 @@ if (!admin.apps.length) {
 const db = admin.database();
 
 module.exports = async (req, res) => {
-  // CORS: allow only from your frontend domain
   res.setHeader("Access-Control-Allow-Origin", "https://vestinoo.pages.dev");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key");
@@ -39,14 +38,25 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const userRef = db.ref(`users/${email}`);
-    const snapshot = await userRef.once("value");
+    const usersRef = db.ref("users");
+    const snapshot = await usersRef.once("value");
 
-    if (!snapshot.exists()) {
-      return res.status(404).json({ error: "User not found" });
+    let foundUserKey = null;
+    snapshot.forEach((childSnapshot) => {
+      const userData = childSnapshot.val();
+      if (userData.email === email) {
+        foundUserKey = childSnapshot.key;
+      }
+    });
+
+    if (!foundUserKey) {
+      return res.status(404).json({ error: "User with this email not found" });
     }
 
-    const user = snapshot.val();
+    const userRef = db.ref(`users/${foundUserKey}`);
+    const userSnapshot = await userRef.once("value");
+    const user = userSnapshot.val();
+
     const currentVestBit = parseFloat(user.vestBit || 0);
     const bonusToAdd = parseFloat(bonusAmount);
 
