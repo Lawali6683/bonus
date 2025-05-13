@@ -31,18 +31,20 @@ module.exports = async (req, res) => {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { email, wellecomeBonus, referralBonusLeve1, referralBonussLeve2 } = req.body;
-
-  if (
-    !email ||
-    (wellecomeBonus === undefined &&
-      referralBonusLeve1 === undefined &&
-      referralBonussLeve2 === undefined)
-  ) {
-    return res.status(400).json({ error: "Invalid request data" });
-  }
-
   try {
+    const { email, wellecomeBonus, referralBonusLeve1, referralBonussLeve2 } = req.body;
+
+    if (
+      !email ||
+      (wellecomeBonus === undefined &&
+        referralBonusLeve1 === undefined &&
+        referralBonussLeve2 === undefined)
+    ) {
+      return res.status(400).json({ error: "Invalid request data" });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
     const usersRef = db.ref("users");
     const snapshot = await usersRef.once("value");
 
@@ -51,43 +53,54 @@ module.exports = async (req, res) => {
 
     snapshot.forEach(child => {
       const data = child.val();
-      if (data.email && data.email.toLowerCase() === email.toLowerCase()) {
+      if (data.email && data.email.trim().toLowerCase() === normalizedEmail) {
         userKey = child.key;
         userData = data;
       }
     });
 
-    if (!userKey) {
+    if (!userKey || !userData) {
+      console.error("User not found for email:", normalizedEmail);
       return res.status(404).json({ error: "User not found" });
     }
 
     const updates = {};
-    let newBalance = userData.userBalance || 0;
+    let currentBalance = parseFloat(userData.userBalance) || 0;
 
-    if (wellecomeBonus > 0 && userData.wellecomeBonus > 0) {
+    // Logging values
+    console.log("User found:", userData);
+    console.log("Incoming bonuses:", { wellecomeBonus, referralBonusLeve1, referralBonussLeve2 });
+
+    if (parseFloat(wellecomeBonus) > 0 && parseFloat(userData.wellecomeBonus) > 0) {
       updates.wellecomeBonus = 0;
-      newBalance += 0.50;
+      currentBalance += 0.50;
     }
 
-    if (referralBonusLeve1 > 0 && userData.referralBonusLeve1 > 0) {
+    if (parseFloat(referralBonusLeve1) > 0 && parseFloat(userData.referralBonusLeve1) > 0) {
       updates.referralBonusLeve1 = 0;
-      newBalance += referralBonusLeve1;
+      currentBalance += parseFloat(referralBonusLeve1);
     }
 
-    if (referralBonussLeve2 > 0 && userData.referralBonussLeve2 > 0) {
+    if (parseFloat(referralBonussLeve2) > 0 && parseFloat(userData.referralBonussLeve2) > 0) {
       updates.referralBonussLeve2 = 0;
-      newBalance += referralBonussLeve2;
+      currentBalance += parseFloat(referralBonussLeve2);
     }
 
-    updates.userBalance = newBalance;
+    if (Object.keys(updates).length === 0) {
+      console.log("No updates needed for user:", userKey);
+      return res.status(200).json({ message: "No bonuses to apply" });
+    }
+
+    updates.userBalance = parseFloat(currentBalance.toFixed(2));
 
     await db.ref(`users/${userKey}`).update(updates);
 
-    return res.status(200).json({ message: "Bonus processed successfully" });
+    console.log("Updated user:", userKey, "Updates:", updates);
+
+    return res.status(200).json({ message: "Bonus processed successfully", updates });
 
   } catch (error) {
     console.error("Error processing the bonus:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ error: "Internal server error", details: error.message });
   }
 };
- 
