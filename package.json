@@ -7,10 +7,11 @@
     "start": "node api/vestBit.js"
   },
   "dependencies": {
-  "firebase-admin": "^11.10.1",
-  "express": "^4.17.1",
-  "body-parser": "^1.19.0",
-  "crypto": "latest"
+    "firebase-admin": "^11.10.1",
+    "express": "^4.17.1",
+    "body-parser": "^1.19.0",
+    "crypto": "latest",
+    "ethers": "^6.10.0"
   },
   "devDependencies": {},
   "author": "",
