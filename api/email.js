@@ -1,4 +1,4 @@
-const fetch = require("node-fetch");
+const { MailerSend, EmailParams, Recipient } = require("mailersend");
 
 module.exports = async (req, res) => {
   try {
@@ -14,41 +14,25 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: "Missing email details" });
     }
 
-    const apiKey = process.env.BREVO_API_KEY;
-
-
-    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: {
-        "accept": "application/json",
-        "api-key": apiKey,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        sender: {
-          name: "Vestinoo Team 📩",
-          email: "vestinoo@brevo.email"  // zaka iya canzawa
-        },
-        to: [
-          {
-            email: to,
-            name: "Recipient"
-          }
-        ],
-        subject: subject,
-        htmlContent: htmlContent
-      })
+    // API KEY (direct for testing)
+    const mailersend = new MailerSend({
+      apiKey: "mlsn.9bc72af91a8fdaad66f61dc9e4f8ec67b73e0729051bd36d323b66a75cd94ff2",
     });
 
-    const result = await response.json();
+    const recipients = [new Recipient(to, "Recipient")];
 
-    if (!response.ok) {
-      console.error("❌ Brevo API error:", result);
-      return res.status(500).json({ error: "Failed to send email", details: result });
-    }
+    const emailParams = new EmailParams()
+      .setFrom("vestinoominer@gmai.com") // Change this to your verified sender or sandbox
+      .setFromName("Vestinoo Team 📩")
+      .setRecipients(recipients)
+      .setSubject(subject)
+      .setHtml(htmlContent)
+      .setText("This email from Vestinoo Mine."); // optional plain text
+
+    const response = await mailersend.email.send(emailParams);
 
     console.log("✅ Email sent successfully to:", to);
-    return res.status(200).json({ message: "Email sent successfully", data: result });
+    return res.status(200).json({ message: "Email sent successfully", data: response.body });
 
   } catch (err) {
     console.error("❌ Email send error:", err);
