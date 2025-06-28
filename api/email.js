@@ -22,12 +22,12 @@ module.exports = async (req, res) => {
     const recipients = [new Recipient(to, "Recipient")];
 
     const emailParams = new EmailParams()
-      .setFrom("vestinoominer@gmai.com") // Change this to your verified sender or sandbox
+      .setFrom("vestinoominer@gmai.com") 
       .setFromName("Vestinoo Team 📩")
       .setRecipients(recipients)
       .setSubject(subject)
       .setHtml(htmlContent)
-      .setText("This email from Vestinoo Mine."); // optional plain text
+      .setText("Wannan sakon daga Vestinoo ne."); // optional plain text
 
     const response = await mailersend.email.send(emailParams);
 
