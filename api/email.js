@@ -1,10 +1,8 @@
-const MailerSend = require("mailersend");
+const { MailerSend, EmailParams, Recipient } = require("mailersend");
 
-const mailersend = new MailerSend.MailerSend({
+const mailersend = new MailerSend({
   apiKey: process.env.MAILERSEND_API_KEY
 });
-
-const { EmailParams, Recipient } = MailerSend;
 
 module.exports = async (req, res) => {
   try {
@@ -21,12 +19,12 @@ module.exports = async (req, res) => {
     const recipients = [new Recipient(to, "Recipient")];
 
     const emailParams = new EmailParams()
-      .setFrom("vestinoomine@gmail.com")
+      .setFrom("vestinoomine@gmail.com") // Make sure this is allowed by MailerSend
       .setFromName("Vestinoo Team 📩")
       .setRecipients(recipients)
       .setSubject(subject)
       .setHtml(htmlContent)
-      .setText("This Email from Vestinoo Team.");
+      .setText("This email is from Vestinoo Team.");
 
     const response = await mailersend.email.send(emailParams);
 
