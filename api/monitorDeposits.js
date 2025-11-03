@@ -5,7 +5,9 @@ const fetch = require("node-fetch");
 const API_AUTH_KEY = process.env.API_AUTH_KEY;
 const FIREBASE_DATABASE_URL = process.env.FIREBASE_DATABASE_URL;
 const SERVICE_ACCOUNT = process.env.FIREBASE_DATABASE_SDK ? JSON.parse(process.env.FIREBASE_DATABASE_SDK) : null;
-const WEBHOOK_URL = process.env.WEBHOOK_URL || "https://bonus-gamma.vercel.app/webhook";
+
+// An gyara an cire process.env.WEBHOOK_URL
+const WEBHOOK_URL = "https://bonus-gamma.vercel.app/webhook"; 
 
 if (!admin.apps.length) {
   admin.initializeApp({
@@ -15,7 +17,7 @@ if (!admin.apps.length) {
 }
 const db = admin.database();
 
-const BSC_RPC = process.env.BSC_RPC || "https://bsc-dataseed.binance.org/";
+const BSC_RPC = "https://bsc-dataseed.binance.org/";
 const provider = new ethers.providers.JsonRpcProvider(BSC_RPC);
 
 const coins = [
@@ -96,6 +98,41 @@ async function sendWebhook({ uid, userCoinpayid, coin, amount, txHash = "", stat
   });
 }
 
+// Gyara: Domin aiki da Admin Request daga Admin Panel (ba Cron Job ba)
+async function getDepositInfo() {
+  const users = await getAllUsers();
+  const deposits = [];
+  for (const user of users) {
+    const walletAddress = getUserWalletAddress(user);
+    if (!walletAddress) continue;
+    
+    const prevBalances = await getLastCheckedBalances(user.uid);
+    const currentBalances = await getUserBalances(walletAddress);
+
+    const prevRaw = {};
+    const currRaw = {};
+    for (const coin of coins) {
+      currRaw[coin.coin] = currentBalances[coin.coin]?.toString() || "0";
+      prevRaw[coin.coin] = prevBalances[coin.coin] || "0";
+    }
+
+    const increased = hasDeposit(currRaw, prevRaw);
+    if (increased.length > 0) {
+      for (const dep of increased) {
+        deposits.push({
+          uid: user.uid,
+          userCoinpayid: user.userCoinpayid,
+          walletAddress: walletAddress,
+          coin: dep.coin,
+          amount: dep.amount,
+          status: "Pending Withdrawal", 
+        });
+      }
+    }
+  }
+  return deposits;
+}
+
 async function main() {
   if (API_AUTH_KEY && process.env.CRON_API_KEY !== API_AUTH_KEY) throw new Error("Invalid API_AUTH_KEY.");
   const users = await getAllUsers();
@@ -124,15 +161,35 @@ async function main() {
 }
 
 module.exports = async (req, res) => {
-  if (req.method !== "GET" && req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "GET" && req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const key = req.headers["x-api-key"] || req.query.key;
+  if (key !== "@haruna66") {
+    return res.status(403).json({ error: "Invalid API Key" });
+  }
+
   try {
-    const key = req.headers["x-api-key"] || req.query.key;
-    if (key !== "@haruna66") return res.status(403).json({ error: "Invalid API Key" });
-    console.log("✅ Cron-job triggered:", new Date().toISOString());
-    await main();
-    return res.status(200).json({ success: true, message: "monitorDeposits finished." });
+    // Idan request ya fito daga Cron Job (babu params a body)
+    if (req.method === "GET" || (req.method === "POST" && Object.keys(req.body).length === 0)) {
+      console.log("✅ Cron-job triggered at:", new Date().toISOString());
+      await main();
+      return res.status(200).json({ success: true, message: "monitorDeposits finished." });
+    }
+    
+    // Idan request ya fito daga Admin Panel (da params)
+    if (req.method === "POST" && req.body.action === "getDeposits") {
+      const deposits = await getDepositInfo();
+      return res.status(200).json({ success: true, deposits: deposits });
+    }
+
+    return res.status(400).json({ error: "Invalid request action" });
+
   } catch (err) {
-    console.error("Error:", err);
-    return res.status(500).json({ error: err.message });
+    console.error("Error in monitorDeposits:", err);
+    // Bada bayanin kuskure a bayyane idan admin ne ke nema
+    const errorMessage = err.message.includes("API_AUTH_KEY") ? "Unauthorized access attempt." : "Server error: " + err.message;
+    return res.status(500).json({ error: errorMessage });
   }
 };
