@@ -1,14 +1,10 @@
 const { ethers } = require("ethers");
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
-
 const API_AUTH_KEY = process.env.API_AUTH_KEY;
 const FIREBASE_DATABASE_URL = process.env.FIREBASE_DATABASE_URL;
 const SERVICE_ACCOUNT = process.env.FIREBASE_DATABASE_SDK ? JSON.parse(process.env.FIREBASE_DATABASE_SDK) : null;
-
-// An gyara an cire process.env.WEBHOOK_URL
-const WEBHOOK_URL = "https://bonus-gamma.vercel.app/webhook"; 
-
+const WEBHOOK_URL = "https://bonus-gamma.vercel.app/webhook";
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(SERVICE_ACCOUNT),
@@ -16,10 +12,8 @@ if (!admin.apps.length) {
   });
 }
 const db = admin.database();
-
-const BSC_RPC = "https://bsc-dataseed.binance.org/";
+const BSC_RPC = process.env.BSC_RPC || "https://bsc-dataseed.binance.org/";
 const provider = new ethers.providers.JsonRpcProvider(BSC_RPC);
-
 const coins = [
   { coin: "BNB", field: "bnbBep20Address", networkId: "56", decimals: 18 },
   { coin: "USDT", field: "usdtBep20Address", networkId: "56", decimals: 18, contractAddress: "0x55d398326f99059fF775485246999027B3197955" },
@@ -28,7 +22,6 @@ const coins = [
   { coin: "USDC", field: "usdcBep20Address", networkId: "56", decimals: 18, contractAddress: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d" }
 ];
 const BEP20_ABI = ["function balanceOf(address) view returns (uint256)"];
-
 async function getAllUsers() {
   const snapshot = await db.ref("users").once("value");
   const users = [];
@@ -38,7 +31,6 @@ async function getAllUsers() {
   });
   return users;
 }
-
 function getUserWalletAddress(user) {
   for (const coin of coins) {
     if (user[coin.field]) return user[coin.field];
@@ -47,7 +39,6 @@ function getUserWalletAddress(user) {
   if (user.walletAddress) return user.walletAddress;
   return null;
 }
-
 async function getUserBalances(walletAddress) {
   const result = {};
   result.BNB = await provider.getBalance(walletAddress);
@@ -62,16 +53,13 @@ async function getUserBalances(walletAddress) {
   }
   return result;
 }
-
 async function getLastCheckedBalances(uid) {
   const snapshot = await db.ref(`deposits_monitor/${uid}`).once("value");
   return snapshot.val() || {};
 }
-
 async function updateLastCheckedBalances(uid, balances) {
   await db.ref(`deposits_monitor/${uid}`).set(balances);
 }
-
 function hasDeposit(current, previous) {
   const result = [];
   for (const coin of Object.keys(current)) {
@@ -88,7 +76,6 @@ function hasDeposit(current, previous) {
   }
   return result;
 }
-
 async function sendWebhook({ uid, userCoinpayid, coin, amount, txHash = "", status = "pending" }) {
   const body = { uid, userCoinpayid, coin, amount, txHash, status };
   await fetch(WEBHOOK_URL, {
@@ -97,45 +84,10 @@ async function sendWebhook({ uid, userCoinpayid, coin, amount, txHash = "", stat
     body: JSON.stringify(body),
   });
 }
-
-// Gyara: Domin aiki da Admin Request daga Admin Panel (ba Cron Job ba)
-async function getDepositInfo() {
+async function main(isAdminRequest = false) {
+  if (API_AUTH_KEY && process.env.CRON_API_KEY !== API_AUTH_KEY && !isAdminRequest) throw new Error("Invalid API_AUTH_KEY.");
   const users = await getAllUsers();
-  const deposits = [];
-  for (const user of users) {
-    const walletAddress = getUserWalletAddress(user);
-    if (!walletAddress) continue;
-    
-    const prevBalances = await getLastCheckedBalances(user.uid);
-    const currentBalances = await getUserBalances(walletAddress);
-
-    const prevRaw = {};
-    const currRaw = {};
-    for (const coin of coins) {
-      currRaw[coin.coin] = currentBalances[coin.coin]?.toString() || "0";
-      prevRaw[coin.coin] = prevBalances[coin.coin] || "0";
-    }
-
-    const increased = hasDeposit(currRaw, prevRaw);
-    if (increased.length > 0) {
-      for (const dep of increased) {
-        deposits.push({
-          uid: user.uid,
-          userCoinpayid: user.userCoinpayid,
-          walletAddress: walletAddress,
-          coin: dep.coin,
-          amount: dep.amount,
-          status: "Pending Withdrawal", 
-        });
-      }
-    }
-  }
-  return deposits;
-}
-
-async function main() {
-  if (API_AUTH_KEY && process.env.CRON_API_KEY !== API_AUTH_KEY) throw new Error("Invalid API_AUTH_KEY.");
-  const users = await getAllUsers();
+  const allIncreasedDeposits = [];
   for (const user of users) {
     try {
       const { uid, userCoinpayid } = user;
@@ -150,46 +102,41 @@ async function main() {
         prevRaw[coin.coin] = prevBalances[coin.coin] || "0";
       }
       const increased = hasDeposit(currRaw, prevRaw);
-      for (const dep of increased) {
-        await sendWebhook({ uid, userCoinpayid, coin: dep.coin, amount: dep.amount, txHash: "", status: "pending" });
+      if (increased.length > 0) {
+        for (const dep of increased) {
+          const depositInfo = { uid, userCoinpayid, walletAddress, ...dep, status: "Pending Withdrawal", isWithdrawn: false };
+          allIncreasedDeposits.push(depositInfo);
+          if (!isAdminRequest) {
+            await sendWebhook(depositInfo);
+          }
+        }
+        await updateLastCheckedBalances(uid, currRaw);
       }
-      await updateLastCheckedBalances(uid, currRaw);
     } catch (err) {
       console.error(`Failed for user ${user.uid}:`, err);
     }
   }
+  return allIncreasedDeposits;
 }
-
 module.exports = async (req, res) => {
   if (req.method !== "GET" && req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
-
-  const key = req.headers["x-api-key"] || req.query.key;
-  if (key !== "@haruna66") {
-    return res.status(403).json({ error: "Invalid API Key" });
-  }
-
   try {
-    // Idan request ya fito daga Cron Job (babu params a body)
-    if (req.method === "GET" || (req.method === "POST" && Object.keys(req.body).length === 0)) {
-      console.log("✅ Cron-job triggered at:", new Date().toISOString());
-      await main();
-      return res.status(200).json({ success: true, message: "monitorDeposits finished." });
+    const key = req.headers["x-api-key"] || req.query.key;
+    if (key !== "@haruna66") {
+      return res.status(403).json({ error: "Invalid API Key" });
     }
+    const isAdminRequest = req.query.source === 'admin';
+    const deposits = await main(isAdminRequest);
     
-    // Idan request ya fito daga Admin Panel (da params)
-    if (req.method === "POST" && req.body.action === "getDeposits") {
-      const deposits = await getDepositInfo();
-      return res.status(200).json({ success: true, deposits: deposits });
+    if (isAdminRequest) {
+      return res.status(200).json({ success: true, deposits });
+    } else {
+      return res.status(200).json({ success: true, message: `monitorDeposits finished. ${deposits.length} deposits found.` });
     }
-
-    return res.status(400).json({ error: "Invalid request action" });
-
   } catch (err) {
     console.error("Error in monitorDeposits:", err);
-    // Bada bayanin kuskure a bayyane idan admin ne ke nema
-    const errorMessage = err.message.includes("API_AUTH_KEY") ? "Unauthorized access attempt." : "Server error: " + err.message;
-    return res.status(500).json({ error: errorMessage });
+    return res.status(500).json({ error: err.message });
   }
 };
